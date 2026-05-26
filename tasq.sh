@@ -1,12 +1,89 @@
 #!/bin/bash
 
-qo_home="${XDG_DATA_HOME:-$HOME/.local/share}/qo"
-mkdir -p "$qo_home"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}/qo"
+config_file="$config_home/config"
 
-tasks_store="$qo_home/tasks.txt"
-focus_store="$qo_home/focus.txt"
+print_help() {
+  printf "tasq: a simple task manager (tasks shown alphabetically; focus pins one to the top)\n"
+  printf "Usage\n"
+  printf "  tasq                 show the task you should focus on\n"
+  printf "  -a, --add <text>     add a new task\n"
+  printf "  -x, --mark-done      mark the focused task (or the first alphabetically) as done\n"
+  printf "  -f, --focus          pick a task: arrows or type its number, Enter to focus, x to mark done, q to cancel\n"
+  printf "  sync [folder]        store your task list in a different folder (e.g. a synced cloud folder)\n"
+  printf "  -h, --help           print this help text\n"
+}
 
-[ ! -f "$tasks_store" ] && touch "$tasks_store"
+## expand a leading ~ to \$HOME
+expand_path() {
+  printf '%s' "${1/#\~/$HOME}"
+}
+
+save_config() {
+  mkdir -p "$config_home"
+  printf '%s\n' "$1" > "$config_file"
+}
+
+## prompt for a storage folder the very first time tasq runs
+first_run_setup() {
+  local default_dir input
+  default_dir="${XDG_DATA_HOME:-$HOME/.local/share}/qo"
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    task_dir="$default_dir"                       # non-interactive: just use the default
+  else
+    echo "Welcome to tasq!"
+    echo "Where should your task list be stored?"
+    echo "Tip: pick a folder inside Dropbox/iCloud/Drive to sync across devices."
+    printf 'Folder [%s]: ' "$default_dir"
+    IFS= read -r input
+    task_dir=$(expand_path "${input:-$default_dir}")
+  fi
+  mkdir -p "$task_dir" || { echo "tasq: could not create $task_dir" >&2; exit 1; }
+  save_config "$task_dir"
+  if [[ -t 1 ]]; then
+    echo "Your tasks live in: $task_dir"
+    echo "Add your first task with: tasq -a \"your task\""
+  fi
+}
+
+## resolve the active task directory from config, running first-run setup if needed
+ensure_task_dir() {
+  [[ -f "$config_file" ]] && task_dir=$(head -n 1 "$config_file")
+  [[ -z "$task_dir" ]] && first_run_setup
+  task_dir=$(expand_path "$task_dir")
+  mkdir -p "$task_dir"
+}
+
+## connect tasq to a (possibly different) folder; adopt its tasks if any, else start fresh
+sync_cmd() {
+  local target="$1" current="" input count
+  [[ -f "$config_file" ]] && current=$(head -n 1 "$config_file")
+
+  if [[ -z "$target" ]]; then
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      echo "tasq is storing tasks in: ${current:-(not set yet)}"
+      echo "usage: tasq sync <folder>"
+      return 0
+    fi
+    echo "tasq is currently storing tasks in: ${current:-(not set yet)}"
+    printf 'Connect to which folder (blank to keep current): '
+    IFS= read -r input
+    [[ -z "$input" ]] && { echo "no change"; return 0; }
+    target="$input"
+  fi
+
+  target=$(expand_path "$target")
+  mkdir -p "$target" || { echo "tasq: could not access $target" >&2; return 1; }
+  save_config "$target"
+
+  if [[ -s "$target/tasks.txt" ]]; then
+    count=$(grep -c '' "$target/tasks.txt")
+    echo "Connected to $target — found $count task(s) already there."
+  else
+    [ ! -f "$target/tasks.txt" ] && touch "$target/tasks.txt"
+    echo "Connected to $target — starting fresh."
+  fi
+}
 
 ## the pinned/focused task, but only if it still exists in the store
 pinned_task() {
@@ -157,6 +234,19 @@ focus_task() {
   printf "ok, let's focus on \"\033[1m%s\033[0m\"\n" "${tasks[$sel]}"
 }
 
+## --- main ---
+
+## help and sync never trigger first-run setup
+case "$1" in
+  -h|--help) print_help; exit 0 ;;
+  sync) shift; sync_cmd "$1"; exit $? ;;
+esac
+
+ensure_task_dir
+tasks_store="$task_dir/tasks.txt"
+focus_store="$task_dir/focus.txt"
+[ ! -f "$tasks_store" ] && touch "$tasks_store"
+
 ## with no args, print the task you should be focusing on
 [[ "$#" -eq 0 ]] && current_task
 
@@ -176,7 +266,7 @@ while [[ "$#" -gt 0 ]]; do
         echo "done: $t"; remove_task "$t"
       fi ;;
     -f|--focus) focus_task || exit $? ;;
-    -h|--help) printf "tasq: a simple task manager (tasks shown alphabetically; focus pins one to the top)\nUsage\n-a, --add <task text> to add a new task\n-x, --mark-done to mark the focused task (or the first alphabetically) as done\n-f, --focus to pick a task: arrows or type its number, Enter to focus, x to mark done, q to cancel\n" ;;
+    -h|--help) print_help ;;
     *) printf "Unknown parameter passed: $1\nUse -h to print help text\n"; exit 1;;
   esac
   shift

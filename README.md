@@ -10,6 +10,18 @@ it, **one at a time**, without distractions
 ### Installation
 Download [tasq.sh](https://raw.githubusercontent.com/navxio/tasq.sh/master/tasq.sh) and add it to your `$PATH`
 
+### Where your tasks are stored
+
+The first time you run tasq it asks where to keep your task list, suggesting a
+sensible default. Pick a folder inside Dropbox/iCloud/Drive and your list syncs
+across machines automatically. The chosen folder is remembered in
+`~/.config/qo/config`.
+
+To point tasq at a different folder later, run `tasq sync <folder>` (or just
+`tasq sync` to be prompted). If that folder already has a task list, tasq adopts
+it; if it's empty, you start fresh there. `tasq sync` only re-points where tasks
+are read from and written to — it never moves or merges your existing files.
+
 ### Usage
 
 Run `./tasq.sh` to print the task you should be focusing on — the one you've
@@ -31,3 +43,5 @@ Flags
   - **enter** to focus it — it gets pinned to the top of the list
   - **x** to mark the highlighted task done
   - **q** or **esc** to cancel
+
+`sync [folder]` store your task list in a different folder (see *Where your tasks are stored* above)
