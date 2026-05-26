@@ -20,3 +20,5 @@ Flags
 `-a, --add "task"` adds a task to the *end* of the queue
 
 `-x, --mark-done` marks the latest task as done and removes it from the queue
+
+`-f, --focus` shows a numbered list and lets you pick a task to focus on — navigate with the arrow keys (a `>` marks the current row) or just type its number, then press enter. The chosen task moves to the top of the queue
