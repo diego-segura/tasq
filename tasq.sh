@@ -6,7 +6,7 @@ config_file="$config_home/config"
 print_help() {
   printf "tasq: a simple task manager (tasks shown alphabetically; focus pins one to the top)\n"
   printf "Usage\n"
-  printf "  tasq                 open the picker: ↑/↓ or j/k (⇧J/⇧K jump 5), a add, f focus, x delete, q quit\n"
+  printf "  tasq                 open the picker: ↑/↓ or j/k (⇧J/⇧K jump 5), a add, e edit, f focus, x delete, q quit\n"
   printf "  -a, --add <text>     add a new task without opening the picker\n"
   printf "  -x, --mark-done      mark the focused task (or the first alphabetically) as done\n"
   printf "  sync [folder]        store your task list in a different folder (e.g. a synced cloud folder)\n"
@@ -116,6 +116,62 @@ display_tasks() {
   fi
 }
 
+## inline line editor (bash 3.2 compatible — read -e -i isn't available there).
+## pre-seeds the buffer with $1, returns the result in REPLY, or empty if cancelled (Esc).
+## supports: left/right arrows, Home/End, Backspace, Ctrl-U (clear), Enter (save), Esc (cancel).
+edit_line() {
+  local buf="$1" pos=${#1} key seq cancelled=0
+  printf '\033[?25h'
+  while true; do
+    ## \r → col 1, \033[K → wipe to EOL, then prompt + buffer, then place cursor at 3+pos
+    printf '\r\033[K\033[1m✎ \033[0m%s\r\033[%dC' "$buf" $((2 + pos))
+
+    IFS= read -rsn1 key || { cancelled=1; break; }
+    ## Enter often arrives as '' because newline is read's delimiter and gets stripped
+    case "$key" in
+      ''|$'\n'|$'\r') break ;;
+      $'\033')
+        IFS= read -rsn2 -t 1 seq
+        case "$seq" in
+          '[D') (( pos > 0 )) && pos=$((pos - 1)) ;;
+          '[C') (( pos < ${#buf} )) && pos=$((pos + 1)) ;;
+          '[H') pos=0 ;;
+          '[F') pos=${#buf} ;;
+          *)    cancelled=1; break ;;                             # bare Esc or unrecognized seq → cancel
+        esac
+        ;;
+      $'\177'|$'\b')
+        if (( pos > 0 )); then
+          buf="${buf:0:pos-1}${buf:pos}"
+          pos=$((pos - 1))
+        fi
+        ;;
+      $'\025')                                                    # Ctrl-U: clear line
+        buf=""; pos=0
+        ;;
+      *)
+        buf="${buf:0:pos}${key}${buf:pos}"
+        pos=$((pos + 1))
+        ;;
+    esac
+  done
+  printf '\033[?25l'
+  if (( cancelled )); then REPLY=""; else REPLY="$buf"; fi
+}
+
+## replace the first exact occurrence of a task with new text, preserving the pin if it matched
+edit_task() {
+  local old="$1" new="$2"
+  TASK_OLD="$old" TASK_NEW="$new" awk '
+    BEGIN { old = ENVIRON["TASK_OLD"]; new = ENVIRON["TASK_NEW"]; done = 0 }
+    $0 == old && !done { print new; done = 1; next }
+    { print }
+  ' "$tasks_store" > "$tasks_store.tmp" && mv "$tasks_store.tmp" "$tasks_store"
+  if [[ -f "$focus_store" && "$(head -n 1 "$focus_store")" == "$old" ]]; then
+    printf '%s\n' "$new" > "$focus_store"
+  fi
+}
+
 ## remove the first exact occurrence of a task, clearing the pin if it matched
 remove_task() {
   local t="$1"
@@ -180,7 +236,7 @@ interactive_picker() {
         fi
       done
     fi
-    printf '\033[2m↑/↓ or j/k · ⇧J/⇧K jump 5 · a add · f focus · x delete · q quit%s\033[0m' "${msg:+ — $msg}"
+    printf '\033[2m↑/↓ or j/k · ⇧J/⇧K jump 5 · a add · e edit · f focus · x delete · q quit%s\033[0m' "${msg:+ — $msg}"
 
     IFS= read -rsn1 key
     case "$key" in
@@ -228,6 +284,32 @@ interactive_picker() {
           msg="added"
         else
           msg="add cancelled"
+        fi
+        ;;
+      e|E)
+        if [[ "$n" -gt 0 ]]; then
+          local original="${tasks[$sel]}" edited
+          ## clear screen, then run an inline line editor pre-seeded with the task text
+          printf '\033[H\033[J'
+          trap - INT
+          edit_line "$original"
+          edited="$REPLY"
+          trap 'printf "\033[?25h\033[?1049l"; exit 130' INT
+          if [[ -z "$edited" ]]; then
+            msg="edit cancelled"
+          elif [[ "$edited" == "$original" ]]; then
+            msg="no changes"
+          else
+            edit_task "$original" "$edited"
+            tasks=()
+            while IFS= read -r line || [[ -n "$line" ]]; do tasks+=("$line"); done < <(display_tasks)
+            n=${#tasks[@]}
+            ## land the carat on the edited task wherever it sorted to
+            for ((i = 0; i < n; i++)); do
+              if [[ "${tasks[$i]}" == "$edited" ]]; then sel=$i; break; fi
+            done
+            msg="edited"
+          fi
         fi
         ;;
       f|F|$'\n'|$'\r')

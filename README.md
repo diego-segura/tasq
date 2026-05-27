@@ -25,6 +25,7 @@ First run prompts you for a folder. Pick one inside Dropbox / iCloud / Drive to 
 | `⇧J` `⇧K` | jump 5 |
 | `f` or `Enter` | focus selected (pins to top, exits) |
 | `a` | add a task inline |
+| `e` | edit selected inline (Enter saves, Esc cancels) |
 | `x` | delete selected |
 | `q` or `Esc` | quit |
 
