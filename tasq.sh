@@ -6,10 +6,9 @@ config_file="$config_home/config"
 print_help() {
   printf "tasq: a simple task manager (tasks shown alphabetically; focus pins one to the top)\n"
   printf "Usage\n"
-  printf "  tasq                 show the task you should focus on\n"
-  printf "  -a, --add <text>     add a new task\n"
+  printf "  tasq                 open the picker: ↑/↓ or j/k (⇧J/⇧K jump 5), a add, f focus, x delete, q quit\n"
+  printf "  -a, --add <text>     add a new task without opening the picker\n"
   printf "  -x, --mark-done      mark the focused task (or the first alphabetically) as done\n"
-  printf "  -f, --focus          pick a task: arrows or type its number, Enter to focus, x to mark done, q to cancel\n"
   printf "  sync [folder]        store your task list in a different folder (e.g. a synced cloud folder)\n"
   printf "  -h, --help           print this help text\n"
 }
@@ -130,108 +129,136 @@ remove_task() {
   fi
 }
 
-## interactive picker: focus a task (pin to top) or mark one done
-focus_task() {
-  local tasks=() line i sel=0 buf="" key seq val msg="" removed term_lines prev_n=0 rendered=0
+## interactive picker: arrows / j-k navigate; a add, f focus (exits), x delete, q quit
+interactive_picker() {
+  local tasks=() line i sel=0 top=0 key seq msg="" added removed t
+  local term_lines visible_n show_n n
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    tasks+=("$line")
-  done < <(display_tasks)
+  while IFS= read -r line || [[ -n "$line" ]]; do tasks+=("$line"); done < <(display_tasks)
+  n=${#tasks[@]}
 
-  local n=${#tasks[@]}
-  if [[ "$n" -eq 0 ]]; then
-    echo "no tasks yet — add one with: tasq -a \"your task\""
+  ## non-interactive: just print the list, no UI
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    for line in "${tasks[@]}"; do printf '%s\n' "$line"; done
     return 0
   fi
 
-  term_lines=$(tput lines 2>/dev/null || echo 24)
-
-  ## fallback for pipes / lists taller than the screen: plain numbered prompt (focus only)
-  if [[ ! -t 0 || ! -t 1 || $((n + 3)) -gt "$term_lines" ]]; then
-    echo "which one to focus on?"
-    for i in "${!tasks[@]}"; do
-      printf '%2d) %s\n' "$((i + 1))" "${tasks[$i]}"
-    done
-    printf 'number: '
-    read -r val
-    if ! [[ "$val" =~ ^[0-9]+$ ]] || [[ "$val" -lt 1 || "$val" -gt "$n" ]]; then
-      echo "not a valid task number" >&2
-      return 1
-    fi
-    printf '%s\n' "${tasks[$((val - 1))]}" > "$focus_store"
-    printf "ok, let's focus on \"\033[1m%s\033[0m\"\n" "${tasks[$((val - 1))]}"
-    return 0
-  fi
-
-  printf '\033[?25l'                                  # hide cursor
-  trap 'printf "\033[?25h\n"; exit 130' INT
+  ## take over the terminal (alt screen) so we have the full height to render into
+  printf '\033[?1049h\033[H\033[?25l'
+  trap 'printf "\033[?25h\033[?1049l"; exit 130' INT
 
   while true; do
-    if [[ "$rendered" -eq 1 ]]; then
-      printf '\r\033[%dA\033[J' "$((prev_n + 1))"     # back to header, wipe the block
+    ## re-read on each render so resizing the window adjusts the viewport;
+    ## stty reads the actual tty size, tput/$LINES can be stale in tmux or some terminals
+    term_lines=$(stty size </dev/tty 2>/dev/null | awk '{print $1}')
+    [[ -z "$term_lines" || "$term_lines" -lt 5 ]] && term_lines=$(tput lines 2>/dev/null || echo 24)
+    visible_n=$((term_lines - 2))
+    [[ "$visible_n" -lt 1 ]] && visible_n=1
+
+    if [[ "$n" -eq 0 ]]; then
+      show_n=1
+    else
+      show_n=$visible_n
+      [[ "$n" -lt "$show_n" ]] && show_n=$n
+      [[ "$sel" -lt "$top" ]] && top=$sel
+      [[ "$sel" -ge $((top + show_n)) ]] && top=$((sel - show_n + 1))
+      [[ "$top" -lt 0 ]] && top=0
     fi
-    rendered=1
-    printf 'which one to focus on?\n'
-    for i in "${!tasks[@]}"; do
-      if [[ "$i" -eq "$sel" ]]; then
-        printf '\033[1m> %2d) %s\033[0m\n' "$((i + 1))" "${tasks[$i]}"
-      else
-        printf '  %2d) %s\n' "$((i + 1))" "${tasks[$i]}"
-      fi
-    done
-    printf '\033[2m%s↑/↓ + Enter focus · x done · q cancel%s\033[0m' "${msg:+$msg — }" "${buf:+  [$buf]}"
-    prev_n=$n
+
+    printf '\033[H\033[J'                                         # home + clear screen
+
+    if [[ "$n" -eq 0 ]]; then
+      printf 'your tasks (none)\n'
+      printf '\033[2m  (press a to add your first task)\033[0m\n'
+    else
+      printf 'your tasks (%d)\n' "$n"
+      for ((i = top; i < top + show_n; i++)); do
+        if [[ "$i" -eq "$sel" ]]; then
+          printf '\033[1m> %s\033[0m\n' "${tasks[$i]}"
+        else
+          printf '  %s\n' "${tasks[$i]}"
+        fi
+      done
+    fi
+    printf '\033[2m↑/↓ or j/k · ⇧J/⇧K jump 5 · a add · f focus · x delete · q quit%s\033[0m' "${msg:+ — $msg}"
 
     IFS= read -rsn1 key
     case "$key" in
       $'\033')
         IFS= read -rsn2 -t 1 seq
         case "$seq" in
-          '[A') sel=$(( (sel - 1 + n) % n )); buf=""; msg="" ;;
-          '[B') sel=$(( (sel + 1) % n )); buf=""; msg="" ;;
-          '')   trap - INT; printf '\r\033[%dA\033[J\033[?25h' "$((n + 1))"; echo "ok, no change"; return 0 ;;
+          '[A') if [[ "$n" -gt 0 ]]; then sel=$((sel - 1)); [[ "$sel" -lt 0 ]] && sel=0; fi; msg="" ;;
+          '[B') if [[ "$n" -gt 0 ]]; then sel=$((sel + 1)); [[ "$sel" -ge "$n" ]] && sel=$((n - 1)); fi; msg="" ;;
+          '')   trap - INT; printf '\033[?25h\033[?1049l'; return 0 ;;
         esac
         ;;
-      [0-9])
-        buf="$buf$key"; msg=""
-        val=$((10#$buf)); [[ "$val" -ge 1 && "$val" -le "$n" ]] && sel=$((val - 1))
+      j)
+        if [[ "$n" -gt 0 ]]; then sel=$((sel + 1)); [[ "$sel" -ge "$n" ]] && sel=$((n - 1)); fi
+        msg=""
         ;;
-      $'\177'|$'\b')
-        buf="${buf%?}"
-        if [[ -n "$buf" ]]; then val=$((10#$buf)); [[ "$val" -ge 1 && "$val" -le "$n" ]] && sel=$((val - 1)); fi
+      k)
+        if [[ "$n" -gt 0 ]]; then sel=$((sel - 1)); [[ "$sel" -lt 0 ]] && sel=0; fi
+        msg=""
         ;;
-      x|X)
-        removed="${tasks[$sel]}"
-        remove_task "$removed"
-        tasks=()
-        while IFS= read -r line || [[ -n "$line" ]]; do tasks+=("$line"); done < <(display_tasks)
-        n=${#tasks[@]}
-        if [[ "$n" -eq 0 ]]; then
-          trap - INT; printf '\r\033[%dA\033[J\033[?25h' "$((prev_n + 1))"
-          printf "done: \"%s\" — all clear, no tasks left\n" "$removed"
+      J)
+        if [[ "$n" -gt 0 ]]; then sel=$((sel + 5)); [[ "$sel" -ge "$n" ]] && sel=$((n - 1)); fi
+        msg=""
+        ;;
+      K)
+        if [[ "$n" -gt 0 ]]; then sel=$((sel - 5)); [[ "$sel" -lt 0 ]] && sel=0; fi
+        msg=""
+        ;;
+      a|A)
+        ## clear screen, show cursor, prompt at the top
+        printf '\033[H\033[J\033[?25h'
+        trap - INT
+        printf '\033[1m+ \033[0m'
+        IFS= read -r added
+        trap 'printf "\033[?25h\033[?1049l"; exit 130' INT
+        printf '\033[?25l'
+        if [[ -n "$added" ]]; then
+          printf '%s\n' "$added" >> "$tasks_store"
+          tasks=()
+          while IFS= read -r line || [[ -n "$line" ]]; do tasks+=("$line"); done < <(display_tasks)
+          n=${#tasks[@]}
+          ## land the carat on the new task wherever it sorted to
+          for ((i = 0; i < n; i++)); do
+            if [[ "${tasks[$i]}" == "$added" ]]; then sel=$i; break; fi
+          done
+          msg="added"
+        else
+          msg="add cancelled"
+        fi
+        ;;
+      f|F|$'\n'|$'\r')
+        if [[ "$n" -gt 0 ]]; then
+          t="${tasks[$sel]}"
+          printf '%s\n' "$t" > "$focus_store"
+          trap - INT
+          printf '\033[?25h\033[?1049l'
+          printf "ok, let's focus on \"\033[1m%s\033[0m\"\n" "$t"
           return 0
         fi
-        [[ "$sel" -ge "$n" ]] && sel=$((n - 1))
-        buf=""; msg="done: $removed"
+        ;;
+      x|X)
+        if [[ "$n" -gt 0 ]]; then
+          removed="${tasks[$sel]}"
+          remove_task "$removed"
+          tasks=()
+          while IFS= read -r line || [[ -n "$line" ]]; do tasks+=("$line"); done < <(display_tasks)
+          n=${#tasks[@]}
+          [[ "$sel" -ge "$n" ]] && sel=$((n - 1))
+          [[ "$sel" -lt 0 ]] && sel=0
+          msg="done: $removed"
+        fi
         ;;
       q|Q)
-        trap - INT; printf '\r\033[%dA\033[J\033[?25h' "$((n + 1))"; echo "ok, no change"; return 0 ;;
-      ''|$'\n'|$'\r')
-        if [[ -n "$buf" ]]; then
-          val=$((10#$buf))
-          if [[ "$val" -ge 1 && "$val" -le "$n" ]]; then sel=$((val - 1)); break; else buf=""; msg="no task #$val"; fi
-        else
-          break
-        fi
+        trap - INT
+        printf '\033[?25h\033[?1049l'
+        return 0
         ;;
     esac
   done
-
-  trap - INT
-  printf '\r\033[%dA\033[J\033[?25h' "$((n + 1))"     # wipe picker, restore cursor
-
-  printf '%s\n' "${tasks[$sel]}" > "$focus_store"
-  printf "ok, let's focus on \"\033[1m%s\033[0m\"\n" "${tasks[$sel]}"
 }
 
 ## --- main ---
@@ -247,8 +274,11 @@ tasks_store="$task_dir/tasks.txt"
 focus_store="$task_dir/focus.txt"
 [ ! -f "$tasks_store" ] && touch "$tasks_store"
 
-## with no args, print the task you should be focusing on
-[[ "$#" -eq 0 ]] && current_task
+## with no args, open the interactive picker
+if [[ "$#" -eq 0 ]]; then
+  interactive_picker
+  exit $?
+fi
 
 while [[ "$#" -gt 0 ]]; do
   case $1 in
@@ -265,7 +295,7 @@ while [[ "$#" -gt 0 ]]; do
       else
         echo "done: $t"; remove_task "$t"
       fi ;;
-    -f|--focus) focus_task || exit $? ;;
+    -f|--focus) interactive_picker || exit $? ;;
     -h|--help) print_help ;;
     *) printf "Unknown parameter passed: $1\nUse -h to print help text\n"; exit 1;;
   esac
