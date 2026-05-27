@@ -1,47 +1,38 @@
 # tasq
 
 [![made-with-bash](https://img.shields.io/badge/Made%20with-Bash-1f425f.svg)](https://www.gnu.org/software/bash/)
-[![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/navxio/tasq/blob/master/LICENSE)
+[![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/diego-segura/tasq/blob/master/LICENSE)
 
-A dead simple task manager that keeps your tasks in an **alphabetical** list
-(handy when you label tasks by project) and lets you pin one to **focus** on
-it, **one at a time**, without distractions
+A dead-simple terminal task manager. Tasks live in an alphabetical list (handy when you label them by project), with one pinned to the top as your **focus**.
 
-### Installation
-Download [tasq.sh](https://raw.githubusercontent.com/navxio/tasq.sh/master/tasq.sh) and add it to your `$PATH`
+Forked from [navxio/tasq.sh](https://github.com/navxio/tasq.sh).
 
-### Where your tasks are stored
+### Install
 
-The first time you run tasq it asks where to keep your task list, suggesting a
-sensible default. Pick a folder inside Dropbox/iCloud/Drive and your list syncs
-across machines automatically. The chosen folder is remembered in
-`~/.config/qo/config`.
+Download [`tasq.sh`](https://raw.githubusercontent.com/diego-segura/tasq/master/tasq.sh), `chmod +x` it, and put it on your `$PATH` (rename to `tasq` if you like).
 
-To point tasq at a different folder later, run `tasq sync <folder>` (or just
-`tasq sync` to be prompted). If that folder already has a task list, tasq adopts
-it; if it's empty, you start fresh there. `tasq sync` only re-points where tasks
-are read from and written to — it never moves or merges your existing files.
+### Storage
+
+First run prompts you for a folder. Pick one inside Dropbox / iCloud / Drive to sync across machines. The choice is saved in `~/.config/qo/config`. Re-point later with `tasq sync <folder>`.
 
 ### Usage
 
-Run `./tasq.sh` to print the task you should be focusing on — the one you've
-pinned, or the first alphabetically if you haven't pinned anything.
+`tasq` opens the interactive picker:
 
-Tasks are always shown in alphabetical (case-insensitive) order, so tasks that
-share a project label group together. The one exception is your focused task,
-which is pinned to the top until it's done.
+| key | action |
+|---|---|
+| `↑` `↓` / `j` `k` | move 1 |
+| `⇧J` `⇧K` | jump 5 |
+| `f` or `Enter` | focus selected (pins to top, exits) |
+| `a` | add a task inline |
+| `x` | delete selected |
+| `q` or `Esc` | quit |
 
-Flags
+One-shot flags (skip the picker):
 
-`-h, --help` print help text
+- `tasq -a "task"` — add a task
+- `tasq -x` — mark the focused task done
+- `tasq sync [folder]` — change storage folder
+- `tasq -h` — help
 
-`-a, --add "task"` adds a task to the list
-
-`-x, --mark-done` marks the focused task (or the first alphabetically) as done and removes it
-
-`-f, --focus` opens an interactive picker. Navigate with the arrow keys (a `>` marks the current row) or type a task's number, then:
-  - **enter** to focus it — it gets pinned to the top of the list
-  - **x** to mark the highlighted task done
-  - **q** or **esc** to cancel
-
-`sync [folder]` store your task list in a different folder (see *Where your tasks are stored* above)
+Tasks always sort alphabetically (case-insensitive), so anything you prefix with a project label groups together. The focused task is the one exception — it pins to the top until done.
