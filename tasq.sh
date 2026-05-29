@@ -84,6 +84,15 @@ sync_cmd() {
   fi
 }
 
+## sort tasks alphabetically, but push tasks that start with an ISO date (YYYY-MM-DD)
+## to the bottom — dated entries are future work and shouldn't dominate the top
+sort_tasks() {
+  awk '{
+    if ($0 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) print "1\t" $0
+    else print "0\t" $0
+  }' | LC_ALL=C sort -f | cut -f2-
+}
+
 ## the pinned/focused task, but only if it still exists in the store
 pinned_task() {
   local pin=""
@@ -100,19 +109,20 @@ current_task() {
   if [[ -n "$pin" ]]; then
     printf '%s\n' "$pin"
   else
-    sort -f "$tasks_store" | head -n 1
+    sort_tasks < "$tasks_store" | head -n 1
   fi
 }
 
 ## all tasks in display order: pinned first (if any), then the rest alphabetically
+## (with ISO-date-prefixed tasks pushed to the bottom — see sort_tasks)
 display_tasks() {
   local pin
   pin=$(pinned_task)
   if [[ -n "$pin" ]]; then
     printf '%s\n' "$pin"
-    grep -vxF -- "$pin" "$tasks_store" | sort -f
+    grep -vxF -- "$pin" "$tasks_store" | sort_tasks
   else
-    sort -f "$tasks_store"
+    sort_tasks < "$tasks_store"
   fi
 }
 
