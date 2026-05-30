@@ -6,7 +6,7 @@ config_file="$config_home/config"
 print_help() {
   printf "tasq: a simple task manager (tasks shown alphabetically; focus pins one to the top)\n"
   printf "Usage\n"
-  printf "  tasq                 open the picker: ↑/↓ or j/k (⇧J/⇧K jump 5), a add, e edit, f focus, x delete, q quit\n"
+  printf "  tasq                 open the picker: ↑/↓ or j/k (⇧J/⇧K jump 5), a add, e edit, f focus, x done/delete, q quit\n"
   printf "  -a, --add <text>     add a new task without opening the picker\n"
   printf "  -x, --mark-done      mark the focused task (or the first alphabetically) as done\n"
   printf "  sync [folder]        store your task list in a different folder (e.g. a synced cloud folder)\n"
@@ -195,7 +195,7 @@ remove_task() {
   fi
 }
 
-## interactive picker: arrows / j-k navigate; a add, f focus (exits), x delete, q quit
+## interactive picker: arrows / j-k navigate; a add, f focus (exits), x done/delete, q quit
 interactive_picker() {
   local tasks=() line i sel=0 top=0 key seq msg="" added removed t
   local term_lines visible_n show_n n
@@ -246,7 +246,7 @@ interactive_picker() {
         fi
       done
     fi
-    printf '\033[2m↑/↓ or j/k · ⇧J/⇧K jump 5 · a add · e edit · f focus · x delete · q quit%s\033[0m' "${msg:+ — $msg}"
+    printf '\033[2m↑/↓ or j/k · ⇧J/⇧K jump 5 · a add · e edit · f focus · x done/delete · q quit%s\033[0m' "${msg:+ — $msg}"
 
     IFS= read -rsn1 key
     case "$key" in
